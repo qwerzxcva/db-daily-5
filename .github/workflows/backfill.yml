@@ -1,0 +1,41 @@
+name: shard-backfill
+# 云端全史回补: 6个分片仓库矩阵并行, 每次跑一批(120只), 每30分钟一轮
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      batch:
+        description: "stocks per run"
+        default: "120"
+permissions:
+  contents: write
+concurrency:
+  group: backfill-shard
+  cancel-in-progress: false
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      matrix:
+        shard: [0, 1]
+      max-parallel: 2
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install pyarrow
+      - name: run
+        run: |
+          ID=${{ matrix.shard }}
+          # 仓库号 = shard_id + 仓库基数(由 repo 名定), 这里 db-daily-0/1
+          python shard_worker.py $ID 6 "${{ github.event.inputs.batch || '120' }}"
+      - name: commit
+        run: |
+          git config user.name "data-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add -A
+          git commit -m "backfill $(date -u +%FT%TZ)" || echo "nothing to commit"
+          git push
